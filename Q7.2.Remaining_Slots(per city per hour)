@@ -1,54 +1,50 @@
-WITH Params AS (
+WITH Parametros AS (
   SELECT
-    'gv-am' AS country_code,
-    2 AS city_id,
-    2 AS zone_id,
-    DATE('2025-03-06') AS original_start_at
+    'gv-bg' AS country_code,
+    60 AS city_id,
+    --2 AS zone_id,
+    DATE('2025-03-06') AS original_start_at,
 ),
 FilteredShifts AS (
   SELECT
-    us.unassigned_shift_id
+    fs.original_start_at,
+    fs.original_end_at,
+    fs.created_at,
+    fs.tag,
+    fs.slots,
   FROM
-    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` us
-    JOIN Params p ON us.country_code = p.country_code 
-                  AND us.city_id = p.city_id 
-                  AND us.zone_id = p.zone_id 
+    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` fs,
+    Parametros p
   WHERE
-    us.original_start_at >= TIMESTAMP(p.original_start_at) 
-    AND us.original_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY))
+    fs.country_code = p.country_code 
+    AND fs.city_id = p.city_id 
+    --AND fs.zone_id = p.zone_id 
+    AND fs.original_start_at >= TIMESTAMP(p.original_start_at) 
+    AND fs.original_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY))
 ),
-FirstMatchingTags AS (
+LatestShifts AS (
   SELECT
-    unassigned_shift_id
+    original_start_at,
+    original_end_at,
+    tag,
+    slots,
+    ROW_NUMBER() OVER (
+      PARTITION BY original_start_at, original_end_at, tag
+      ORDER BY created_at DESC
+    ) AS rn
   FROM
     FilteredShifts
-  WHERE
-    EXISTS (
-      SELECT 1 
-      FROM `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` 
-      WHERE unassigned_shift_id = FilteredShifts.unassigned_shift_id 
-      AND (tag = 'AUTOMATIC' OR tag = 'MANUAL')
-    )
 )
-
 SELECT
-  s.shift_start_at,
-  s.shift_end_at,
-  COUNT(*) AS booked_shifts
+  original_start_at,
+  original_end_at,
+  tag,
+  slots AS remaining_slots,
 FROM
-  `fulfillment-dwh-production.curated_data_shared.shifts` s
-JOIN
-  FirstMatchingTags fmt ON s.unassigned_shift_id = fmt.unassigned_shift_id
-JOIN Params p ON s.country_code = p.country_code 
-              AND s.city_id = p.city_id 
-              AND s.zone_id = p.zone_id 
+  LatestShifts
 WHERE
-  s.shift_start_at >= TIMESTAMP(p.original_start_at) 
-  AND s.shift_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY))
-  AND s.shift_state IN ('EVALUATED', 'PUBLISHED') 
-  AND s.shift_tag = 'APPLICATION'
-GROUP BY
-  s.shift_start_at,
-  s.shift_end_at
-ORDER BY 
-  s.shift_start_at ASC;
+  rn = 1
+ORDER BY
+  original_start_at ASC,
+  original_end_at ASC,
+  tag ASC;
