@@ -1,0 +1,145 @@
+/* 
+Overview:
+The objetive of this query is to enlist the riders that booked, whose shifts were created manually without rider_id. 
+
+Usage: 
+It is important to declare de variable 'original_start_at', that should be the date in investigation,and country_code, city_id and zone.id as well.
+There are two ways of selecting original_start_at: by a complete day, use Case A: complete day, or by slots time period, use Case B: slots
+*/
+
+-- Case A: complete day
+WITH Params AS (
+  SELECT
+    'gv-md' AS country_code,
+    2 AS city_id,
+  --  9 AS zone_id,
+    DATE('2025-02-28') AS original_start_at 
+),
+FilteredShifts AS (
+  SELECT
+    us.original_start_at,
+    us.original_end_at,
+    us.created_at,
+    us.updated_at,
+    us.unassigned_shift_id,
+    us.created_by,
+    us.tag,
+    us.slots,
+    us.original_slots
+  FROM
+    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` us,
+    Params p
+  WHERE
+    us.country_code = p.country_code AND
+    us.city_id = p.city_id AND
+  --  us.zone_id = p.zone_id AND
+    us.original_start_at >= TIMESTAMP(p.original_start_at) AND
+    us.original_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY))
+),
+FirstMatchingTags AS (
+  SELECT
+    unassigned_shift_id
+  FROM
+    FilteredShifts
+  WHERE
+    tag IN ('MANUAL','CSV')
+)
+
+SELECT
+  s.shift_start_at,
+  s.shift_end_at,
+  s.created_at,
+  s.rider_id,
+  s.shift_created_by_email,
+  s.unassigned_shift_id,
+  s.shift_state,
+  s.shift_tag,
+  CASE
+    WHEN DATE(s.created_at) = DATE_SUB(DATE(s.shift_start_at), INTERVAL 1 DAY) THEN 'Probably RTO'
+    ELSE 'Global/Local Team'
+  END AS Responsible
+FROM
+  `fulfillment-dwh-production.curated_data_shared.shifts` s
+JOIN
+  FirstMatchingTags fmt
+ON
+  s.unassigned_shift_id = fmt.unassigned_shift_id
+CROSS JOIN Params p
+WHERE
+  s.country_code = p.country_code AND
+  s.shift_start_at >= TIMESTAMP(p.original_start_at) AND
+  s.shift_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY)) AND
+  s.city_id = p.city_id AND
+--  s.zone_id = p.zone_id AND
+  shift_state IN ('PUBLISHED', 'EVALUATED') AND
+  s.shift_tag = 'APPLICATION'
+ORDER BY s.shift_start_at ASC;
+
+-- Case B: slots
+/*
+WITH Params AS (
+  SELECT
+    'gv-md' AS country_code,
+    2 AS city_id,
+  --  9 AS zone_id,
+    TIMESTAMP ('2025-02-03 10:00:00 UTC') AS original_start_at
+),
+FilteredShifts AS (
+  SELECT
+    us.original_start_at,
+    us.original_end_at,
+    us.created_at,
+    us.updated_at,
+    us.unassigned_shift_id,
+    us.created_by,
+    us.tag,
+    us.slots,
+    us.original_slots
+  FROM
+    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` us,
+    Params p
+  WHERE
+    us.country_code = p.country_code AND
+    us.city_id = p.city_id AND
+  --  us.zone_id = p.zone_id AND
+    us.original_start_at = p.original_start_at
+),
+FirstMatchingTags AS (
+  SELECT
+    unassigned_shift_id
+  FROM
+    FilteredShifts
+  WHERE
+    tag IN ('MANUAL','CSV')
+)
+
+SELECT
+  s.shift_start_at,
+  s.shift_end_at,
+  s.created_at,
+  s.rider_id,
+  s.shift_created_by_email,
+  s.unassigned_shift_id,
+  s.shift_state,
+  s.shift_tag,
+  CASE
+    WHEN DATE(s.created_at) = DATE_SUB(DATE(s.shift_start_at), INTERVAL 1 DAY) THEN 'Probably RTO'
+    ELSE 'Global/Local Team'
+  END AS Responsible
+FROM
+  `fulfillment-dwh-production.curated_data_shared.shifts` s
+JOIN
+  FirstMatchingTags fmt
+ON
+  s.unassigned_shift_id = fmt.unassigned_shift_id
+CROSS JOIN Params p
+WHERE
+  s.country_code = p.country_code AND
+  s.shift_start_at = p.original_start_at AND
+  s.city_id = p.city_id AND
+--  s.zone_id = p.zone_id AND
+  shift_state IN ('PUBLISHED', 'EVALUATED') AND
+  s.shift_tag = 'APPLICATION'
+ORDER BY s.shift_start_at ASC;
+
+*/
