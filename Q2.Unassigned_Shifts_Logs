@@ -1,0 +1,91 @@
+/* 
+Overview:
+The objetive of this query is to enlist the logs of modification in the Unassigned Shifts Table.
+
+Usage: 
+It is important to declare de variable 'original_start_at', that should be the date in investigation,and country_code, city_id and zone.id as well.
+'Alignment_date' and 'release_date' refer to the dates when the forecaster first loads/reviews the forecast, and the date when the calendar is released, respectively. They are not a must, but helps undestand the process.  
+There are two ways of selecting original_start_at: by a complete day, use Case A: complete day, or by slots time period, use Case B: slots
+*/
+
+
+-- Case A: complete day
+WITH Parametros AS (
+  SELECT
+    'gv-md' AS country_code, 
+    2 AS city_id,
+    -- 9 AS zone_id,
+    DATE('2025-02-28') AS original_start_at,
+    TIMESTAMP('2025-02-20 10:00:00 UTC') AS alignment_date, 
+    TIMESTAMP('2025-02-21 15:00:00 UTC') AS release_date 
+),
+FilteredShifts AS (
+  SELECT
+    fs.original_start_at,
+    fs.original_end_at,
+    fs.created_at,
+    fs.updated_at,
+    fs.unassigned_shift_id,
+    fs.created_by,
+    fs.tag,
+    fs.slots,
+    fs.original_slots,
+    CASE
+      WHEN fs.created_at < TIMESTAMP(p.alignment_date) THEN 'Automatic'
+      WHEN fs.created_at < TIMESTAMP(p.release_date) AND fs.created_at >= TIMESTAMP(p.alignment_date) THEN 'During forecaster control'
+      ELSE 'Already released'
+    END AS Event
+  FROM
+    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` fs,
+    Parametros p
+  WHERE
+    fs.country_code = p.country_code AND
+    fs.city_id = p.city_id AND
+   -- fs.zone_id = p.zone_id AND
+    fs.original_start_at >= TIMESTAMP(p.original_start_at) AND 
+    fs.original_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY)) 
+)
+SELECT * FROM FilteredShifts
+ORDER BY original_start_at, created_at, updated_at ASC;
+
+
+-- Case B: slots
+/* 
+WITH Parametros AS (
+  SELECT
+    'gv-md' AS country_code, 
+    2 AS city_id,
+    -- 9 AS zone_id,
+    TIMESTAMP ('2025-02-03 10:00:00 UTC') AS original_start_at,
+    TIMESTAMP('2025-02-20 10:00:00 UTC') AS alignment_date, 
+    TIMESTAMP('2025-02-21 15:00:00 UTC') AS release_date 
+),
+FilteredShifts AS (
+  SELECT
+    fs.original_start_at,
+    fs.original_end_at,
+    fs.created_at,
+    fs.updated_at,
+    fs.unassigned_shift_id,
+    fs.created_by,
+    fs.tag,
+    fs.slots,
+    fs.original_slots,
+    CASE
+      WHEN fs.created_at < TIMESTAMP(p.alignment_date) THEN 'Automatic'
+      WHEN fs.created_at < TIMESTAMP(p.release_date) AND fs.created_at >= TIMESTAMP(p.alignment_date) THEN 'During forecaster control'
+      ELSE 'Already released'
+    END AS Event
+  FROM
+    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` fs,
+    Parametros p
+  WHERE
+    fs.country_code = p.country_code AND
+    fs.city_id = p.city_id AND
+   -- fs.zone_id = p.zone_id AND
+    fs.original_start_at = p.original_start_at AND 
+)
+SELECT * FROM FilteredShifts
+ORDER BY original_start_at, created_at, updated_at ASC;
+
+*/
