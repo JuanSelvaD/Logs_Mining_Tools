@@ -1,1 +1,54 @@
+WITH Params AS (
+  SELECT
+    'gv-am' AS country_code,
+    2 AS city_id,
+    2 AS zone_id,
+    DATE('2025-03-06') AS original_start_at
+),
+FilteredShifts AS (
+  SELECT
+    us.unassigned_shift_id
+  FROM
+    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` us
+    JOIN Params p ON us.country_code = p.country_code 
+                  AND us.city_id = p.city_id 
+                  AND us.zone_id = p.zone_id 
+  WHERE
+    us.original_start_at >= TIMESTAMP(p.original_start_at) 
+    AND us.original_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY))
+),
+FirstMatchingTags AS (
+  SELECT
+    unassigned_shift_id
+  FROM
+    FilteredShifts
+  WHERE
+    EXISTS (
+      SELECT 1 
+      FROM `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` 
+      WHERE unassigned_shift_id = FilteredShifts.unassigned_shift_id 
+      AND (tag = 'AUTOMATIC' OR tag = 'MANUAL')
+    )
+)
 
+SELECT
+  s.shift_start_at,
+  s.shift_end_at,
+  COUNT(*) AS booked_shifts
+FROM
+  `fulfillment-dwh-production.curated_data_shared.shifts` s
+JOIN
+  FirstMatchingTags fmt ON s.unassigned_shift_id = fmt.unassigned_shift_id
+JOIN Params p ON s.country_code = p.country_code 
+              AND s.city_id = p.city_id 
+              AND s.zone_id = p.zone_id 
+WHERE
+  s.shift_start_at >= TIMESTAMP(p.original_start_at) 
+  AND s.shift_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY))
+  AND s.shift_state IN ('EVALUATED', 'PUBLISHED') 
+  AND s.shift_tag = 'APPLICATION'
+GROUP BY
+  s.shift_start_at,
+  s.shift_end_at
+ORDER BY 
+  s.shift_start_at ASC;
