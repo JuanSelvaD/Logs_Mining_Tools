@@ -1,0 +1,106 @@
+/* 
+Overview:
+The objetive of this query is to enlist the logs of modification in the Rider demand curve. 
+In whis way the user should compare this mods with the shifts curve (Q2.Unassigned_Shifts_Logs) and be able to check if there is a correlation.
+
+Usage: 
+Declare the variables country_code, city_id and zone_id at the lines 103-105
+*/
+
+WITH parameters AS (
+  SELECT CAST('2025-03-03' AS DATE) AS start_date,
+         DATE_ADD(CAST('2025-03-03' AS DATE), INTERVAL 2 DAY) AS end_date
+), dates AS (
+  SELECT date_time
+  FROM UNNEST(GENERATE_TIMESTAMP_ARRAY(
+    TIMESTAMP_TRUNC(CAST((SELECT start_date FROM parameters) AS TIMESTAMP), DAY),
+    TIMESTAMP_TRUNC((SELECT CAST(end_date AS TIMESTAMP) FROM parameters), HOUR), INTERVAL 15 MINUTE)
+  ) AS date_time
+), report_dates AS (
+  SELECT CAST(date_time AS DATE) AS report_date,
+         date_time AS start_datetime,
+         TIMESTAMP_ADD(date_time, INTERVAL 15 MINUTE) AS end_datetime
+  FROM dates
+), countries AS (
+  SELECT c.country_code,
+         ci.id AS city_id,
+         zo.id AS zone_id,
+         zo.is_active,
+         zo.updated_at
+  FROM fulfillment-dwh-production.curated_data_shared.countries c
+  LEFT JOIN UNNEST(cities) ci
+  LEFT JOIN UNNEST(zones) zo
+), order_forecasts AS (
+  SELECT o.country_code,
+         o.zone_id,
+         c.city_id,
+         c.updated_at,
+         c.is_active,
+         o.timezone,
+         o.created_date,
+         o.forecasts,
+         o.model_name
+  FROM fulfillment-dwh-production.curated_data_shared.order_forecasts o
+  LEFT JOIN countries c ON o.country_code = c.country_code
+    AND o.zone_id = c.zone_id
+  WHERE o.created_date >= (SELECT start_date FROM parameters)
+    AND NOT STARTS_WITH(o.country_code, 'dp-')
+    AND NOT STARTS_WITH(o.country_code, 'gs-')
+), latest_forecast_dataset AS (
+  SELECT o.country_code,
+         o.city_id,
+         o.zone_id,
+         o.timezone,
+         DATE(d.start_datetime, o.timezone) AS report_date_local,
+         DATETIME(d.start_datetime, o.timezone) AS start_datetime_local,
+         DATETIME(d.end_datetime, o.timezone) AS end_datetime_local,
+         IF(model_name = 'rooster', orders, NULL) AS order_forecast,
+         IF(model_name = 'rooster_adjusted', orders, NULL) AS adjusted_order_forecast,
+         NULL AS rider_demand,
+         NULL AS no_shows_forecast,
+         NULL AS breaks_forecast,
+         NULL AS late_logins_forecast
+  FROM order_forecasts o
+  LEFT JOIN UNNEST(forecasts) f
+  INNER JOIN report_dates d ON f.forecast_for = d.start_datetime OR TIMESTAMP_ADD(f.forecast_for, INTERVAL 15 MINUTE) = d.start_datetime
+  WHERE DATE(f.forecast_for_local) BETWEEN (SELECT start_date FROM parameters) AND (SELECT end_date FROM parameters)
+    AND model_name IN ('rooster', 'rooster_adjusted')
+    AND (o.is_active OR (o.is_active = FALSE AND f.forecast_for < o.updated_at))
+  UNION ALL
+  SELECT o.country_code,
+         o.city_id,
+         o.zone_id,
+         o.timezone,
+         DATE(demand_for_local) AS report_date_local,
+         d.demand_for_local AS start_datetime_local,
+         DATETIME_ADD(d.demand_for_local, INTERVAL 15 MINUTE) AS end_datetime_local,
+         NULL AS order_forecast,
+         NULL AS adjusted_order_forecast,
+         d.riders_needed AS riders_needed,
+         d.no_shows_expected AS no_shows_forecast,
+         d.breaks_expected AS breaks_forecast,
+         d.late_logins_expected AS late_logins_forecast
+  FROM order_forecasts o
+  LEFT JOIN UNNEST(forecasts) f
+  LEFT JOIN UNNEST(f.riders_demand) d
+  WHERE DATE(demand_for_local) BETWEEN (SELECT start_date FROM parameters) AND (SELECT end_date FROM parameters)
+    AND ARRAY_LENGTH(riders_demand) > 0
+    AND (o.is_active OR o.is_active = FALSE AND TIMESTAMP(d.demand_for_local, timezone) < o.updated_at)
+)
+SELECT country_code,
+       city_id,
+       zone_id,
+       report_date_local,
+       start_datetime_local,
+end_datetime_local,
+       order_forecast,
+       adjusted_order_forecast,
+       rider_demand,
+       no_shows_forecast,
+       breaks_forecast,
+       late_logins_forecast
+FROM latest_forecast_dataset
+WHERE country_code = 'gv-am'
+  AND city_id = 2
+  AND zone_id = 2
+ORDER BY start_datetime_local ASC
