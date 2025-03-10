@@ -1,0 +1,150 @@
+/* 
+Overview:
+The objetive of this query is to enlist the riders that booked the original slots that were available at the calendar release moment. 
+It consider all the riders, no matter if the shift was created manually or automatically.
+
+Usage: 
+It is important to declare de variable original_start_at that should be the date in investigation,and country_code, city_id and zone.id as well.
+'Alignment_date' and 'release_date' refer to the dates when the forecaster first loads/reviews the forecast, and the date when the calendar is released, respectively. Release_date is a must. 
+There are two ways of selecting original_start_at: by a complete day, use Case A: complete day, or by slots time period, use Case B: slots.
+In case the result is NULL, check if the original slots could been deleted/cancelled.
+*/
+
+-- Case A: complete day
+WITH Params AS (
+  SELECT
+    'gv-hr' AS country_code,
+    22 AS city_id,
+    -- 9 AS zone_id,
+    DATE('2025-02-24') AS original_start_at,
+    TIMESTAMP('2025-02-18 10:00:00 UTC') AS alignment_date, 
+    TIMESTAMP('2025-02-19 15:00:00 UTC') AS release_date 
+),
+FilteredShifts AS (
+  SELECT
+    us.original_start_at,
+    us.original_end_at,
+    us.created_at,
+    us.updated_at,
+    us.unassigned_shift_id,
+    us.created_by,
+    us.tag,
+    us.slots,
+    us.original_slots,
+    CASE
+      WHEN us.created_at < TIMESTAMP(p.alignment_date) THEN 'Automatic'
+      WHEN us.created_at < TIMESTAMP(p.release_date) AND us.created_at >= TIMESTAMP(p.alignment_date) THEN 'During forecaster control'
+      ELSE 'Already released'
+    END AS Event
+  FROM
+    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` us,
+    Params p
+  WHERE
+    us.country_code = p.country_code AND
+    us.city_id = p.city_id AND
+  --  us.zone_id = p.zone_id AND
+    us.original_start_at >= TIMESTAMP(p.original_start_at) AND
+    us.original_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY))
+),
+FirstAlreadyReleased AS (
+  SELECT
+    unassigned_shift_id AS original_booking_unassigned_shift_id,
+    ROW_NUMBER() OVER(PARTITION BY unassigned_shift_id ORDER BY created_at) AS rn
+  FROM
+    FilteredShifts
+  WHERE
+    Event = 'Already released'
+)
+
+SELECT
+  s.shift_start_at,
+  s.shift_end_at,
+  s.rider_id,
+  s.shift_created_by_email,
+  s.unassigned_shift_id,
+  s.shift_state
+FROM
+  `fulfillment-dwh-production.curated_data_shared.shifts` s
+JOIN
+  FirstAlreadyReleased far
+ON
+  s.unassigned_shift_id = far.original_booking_unassigned_shift_id
+CROSS JOIN Params p
+WHERE
+  s.country_code = p.country_code AND
+  s.shift_start_at >= TIMESTAMP(p.original_start_at) AND
+  s.shift_start_at < TIMESTAMP(DATE_ADD(p.original_start_at, INTERVAL 1 DAY)) AND
+  s.city_id = p.city_id AND
+--  s.zone_id = p.zone_id AND
+  s.shift_state <> 'CANCELLED'
+ORDER BY s.shift_start_at ASC;
+
+
+-- Case B: slots
+/* 
+WITH Params AS (
+  SELECT
+    'gv-hr' AS country_code,
+    22 AS city_id,
+    -- 9 AS zone_id,
+    TIMESTAMP ('2025-02-03 10:00:00 UTC') AS original_start_at,
+    TIMESTAMP('2025-02-18 10:00:00 UTC') AS alignment_date, 
+    TIMESTAMP('2025-02-19 15:00:00 UTC') AS release_date 
+),
+FilteredShifts AS (
+  SELECT
+    us.original_start_at,
+    us.original_end_at,
+    us.created_at,
+    us.updated_at,
+    us.unassigned_shift_id,
+    us.created_by,
+    us.tag,
+    us.slots,
+    us.original_slots,
+    CASE
+      WHEN us.created_at < TIMESTAMP(p.alignment_date) THEN 'Automatic'
+      WHEN us.created_at < TIMESTAMP(p.release_date) AND us.created_at >= TIMESTAMP(p.alignment_date) THEN 'During forecaster control'
+      ELSE 'Already released'
+    END AS Event
+  FROM
+    `fulfillment-dwh-production.curated_data_shared.unassigned_shifts` us,
+    Params p
+  WHERE
+    us.country_code = p.country_code AND
+    us.city_id = p.city_id AND
+  --  us.zone_id = p.zone_id AND
+    us.original_start_at = p.original_start_at
+),
+FirstAlreadyReleased AS (
+  SELECT
+    unassigned_shift_id AS original_booking_unassigned_shift_id,
+    ROW_NUMBER() OVER(PARTITION BY unassigned_shift_id ORDER BY created_at) AS rn
+  FROM
+    FilteredShifts
+  WHERE
+    Event = 'Already released'
+)
+
+SELECT
+  s.shift_start_at,
+  s.shift_end_at,
+  s.rider_id,
+  s.shift_created_by_email,
+  s.unassigned_shift_id,
+  s.shift_state
+FROM
+  `fulfillment-dwh-production.curated_data_shared.shifts` s
+JOIN
+  FirstAlreadyReleased far
+ON
+  s.unassigned_shift_id = far.original_booking_unassigned_shift_id
+CROSS JOIN Params p
+WHERE
+  s.country_code = p.country_code AND
+  s.shift_start_at = p.original_start_at
+  s.city_id = p.city_id AND
+--  s.zone_id = p.zone_id AND
+  s.shift_state <> 'CANCELLED'
+ORDER BY s.shift_start_at ASC;
+*/
