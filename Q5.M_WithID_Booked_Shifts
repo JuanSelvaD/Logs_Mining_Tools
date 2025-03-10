@@ -1,0 +1,71 @@
+/* 
+Overview:
+The objetive of this query is to enlist the riders that booked, whose shifts were created manually with rider_id. 
+
+Usage: 
+It is important to declare de variable date in the WHERE clause in the 'shift_start_at', that should be the date in investigation,and country_code, city_id and zone.id as well.
+There are two ways of selecting original_start_at: by a complete day, use Case A: complete day, or by slots time period, use Case B: slots
+*/
+
+-- Case A: complete day
+SELECT
+  country_code,
+  rider_id,
+  city_id,
+  zone_id,
+  starting_point_id,
+  shift_start_at,
+  shift_end_at,
+  shift_created_by_email,
+  shift_updated_by_email,
+  created_at,
+  updated_at,
+  CASE
+    WHEN SUBSTRING(SPLIT(shift_created_by_email, '@')[SAFE_OFFSET(1)], 0, 9) = 'providers' THEN 'RTO'
+    WHEN SUBSTRING(SPLIT(shift_created_by_email, '@')[SAFE_OFFSET(1)], 0, 5) = 'glovo' THEN 'Forecast/Local Team' 
+    ELSE 'Double Check'  
+  END AS Respansable
+FROM
+  `fulfillment-dwh-production.curated_data_shared.shifts`
+WHERE
+  country_code = 'gv-md'AND
+  shift_start_at >= TIMESTAMP('2025-02-26') AND
+  shift_start_at < TIMESTAMP(DATE_ADD('2025-02-26', INTERVAL 1 DAY)) AND
+  city_id = 2
+--  AND zone_id = 2
+  AND shift_tag IN ('CSV','MANUAL')
+  AND shift_state IN ('PUBLISHED', 'EVALUATED')
+ORDER BY
+  shift_start_at;
+
+-- Case B: slots
+/*
+SELECT
+  country_code,
+  rider_id,
+  city_id,
+  zone_id,
+  starting_point_id,
+  shift_start_at,
+  shift_end_at,
+  shift_created_by_email,
+  shift_updated_by_email,
+  created_at,
+  updated_at,
+  CASE
+    WHEN SUBSTRING(SPLIT(shift_created_by_email, '@')[SAFE_OFFSET(1)], 0, 9) = 'providers' THEN 'RTO'
+    WHEN SUBSTRING(SPLIT(shift_created_by_email, '@')[SAFE_OFFSET(1)], 0, 5) = 'glovo' THEN 'Forecast/Local Team' 
+    ELSE 'Double Check' 
+  END AS Responsable
+FROM
+  `fulfillment-dwh-production.curated_data_shared.shifts`
+WHERE
+  country_code = 'gv-md'AND
+  shift_start_at = TIMESTAMP('2025-02-26') AND
+  city_id = 2
+--  AND zone_id = 2
+  AND shift_tag IN ('CSV','MANUAL')
+  AND shift_state IN ('PUBLISHED', 'EVALUATED')
+ORDER BY
+  shift_start_at;
+*/
